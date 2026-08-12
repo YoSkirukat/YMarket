@@ -1,36 +1,87 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Digital Seller — Яндекс Маркет
 
-## Getting Started
+MVP-сервис для продажи **электронных товаров** (ключей активации) на Яндекс Маркете через Partner API.
 
-First, run the development server:
+## Возможности
+
+- Сохранение API-Key, Campaign ID и Business ID
+- Синхронизация товаров и заказов в локальную SQLite БД
+- Страница электронных товаров с остатками кодов активации
+- Автоматическая передача кодов покупателю методом [`deliverDigitalGoods`](https://yandex.ru/dev/market/partner-api/doc/ru/reference/orders/provideOrderDigitalCodes) в течение 30 минут после статуса `PROCESSING`
+- Webhook-эндпоинт для push-уведомлений Маркета
+
+## Стек
+
+- Next.js 15 (App Router) + TypeScript + Tailwind CSS
+- Prisma + SQLite
+
+## Быстрый старт
 
 ```bash
+npm install
+npm run db:push
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Откройте [http://localhost:3000](http://localhost:3000) → **Настройки**.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 1. API-ключ
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+В кабинете продавца: иконка аккаунта → **Настройки** → **API и модули** → создать токен.
 
-## Learn More
+Нужные доступы:
 
-To learn more about Next.js, take a look at the following resources:
+- `offers-and-cards-management` (или read-only) — товары
+- `inventory-and-order-processing` — заказы и передача кодов
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Заголовок запросов: `Api-Key: <token>`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 2. ID магазина
 
-## Deploy on Vercel
+Нажмите **Подставить ID из API** или укажите вручную:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- **Campaign ID** — идентификатор кампании (магазина)
+- **Business ID** — идентификатор кабинета
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### 3. Рабочий процесс
+
+1. **Товары** → Синхронизировать
+2. **Электронные товары** → открыть товар → добавить коды
+3. **Заказы** → Синхронизировать (или настроить webhook)
+
+При заказе со статусом `PROCESSING` и `delivery.type = DIGITAL` сервис:
+
+1. Берёт нужное число кодов со статуса `available`
+2. Вызывает `POST /v2/campaigns/{campaignId}/orders/{orderId}/deliverDigitalGoods`
+3. Помечает коды как `sold`
+
+## Webhook
+
+В настройках Маркета укажите URL:
+
+```text
+https://your-domain/api/webhooks/yandex?secret=ВАШ_СЕКРЕТ
+```
+
+Секрет задаётся на странице **Настройки**.
+
+Для локальной разработки можно периодически нажимать «Синхронизировать заказы» или дергать cron:
+
+```bash
+curl -X POST http://localhost:3000/api/sync/orders
+```
+
+## Важно
+
+- Цифровые товары на Маркете работают по модели **DBS**
+- Ключ нужно передать **в течение 30 минут** после перехода заказа в `PROCESSING`
+- Цифровой товар в каталоге Маркета помечается флагом `downloadable: true`
+
+## Структура
+
+```text
+src/app          — страницы и API routes
+src/components   — UI
+src/lib          — Prisma, клиент YM API, синхронизация
+prisma           — схема БД
+```

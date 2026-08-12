@@ -1,0 +1,118 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Settings {
+  id               Int      @id @default(1)
+  apiKey           String   @default("")
+  campaignId       String   @default("")
+  businessId       String   @default("")
+  shopName         String   @default("")
+  activateTill     String   @default("2099-12-31")
+  slipText         String   @default("Инструкция по активации прилагается к коду.")
+  autoDeliver      Boolean  @default(true)
+  webhookSecret    String   @default("")
+  warehouseId      String   @default("")
+  lastProductsSync DateTime?
+  lastOrdersSync   DateTime?
+  lastStocksSync   DateTime?
+  updatedAt        DateTime @updatedAt
+}
+
+model Product {
+  id            String           @id @default(cuid())
+  offerId       String           @unique
+  name          String
+  vendor        String?
+  category      String?
+  barcode       String?
+  price         Float?
+  currency      String           @default("RUR")
+  pictureUrl    String?
+  description   String?
+  isDigital     Boolean          @default(false)
+  stock         Int              @default(0)
+  marketStatus  String?
+  rawJson       String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  codes         ActivationCode[]
+  orderItems    OrderItem[]
+}
+
+model ActivationCode {
+  id        String    @id @default(cuid())
+  productId String
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  code      String
+  status    String    @default("available") // available | reserved | sold | invalid
+  orderId   String?
+  order     Order?    @relation(fields: [orderId], references: [id])
+  soldAt    DateTime?
+  note      String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([productId, code])
+  @@index([productId, status])
+  @@index([status])
+}
+
+model Order {
+  id                 String           @id @default(cuid())
+  marketOrderId      String           @unique
+  campaignId         String?
+  status             String
+  substatus          String?
+  deliveryType       String?
+  isDigital          Boolean          @default(false)
+  buyerName          String?
+  totalPrice         Float?
+  currency           String           @default("RUR")
+  creationDate       DateTime?
+  processingDeadline DateTime?
+  digitalDelivered   Boolean          @default(false)
+  digitalDeliveredAt DateTime?
+  deliveryError      String?
+  rawJson            String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  items              OrderItem[]
+  codes              ActivationCode[]
+}
+
+model OrderItem {
+  id             String   @id @default(cuid())
+  orderId        String
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId      String?
+  product        Product? @relation(fields: [productId], references: [id])
+  marketItemId   Int?
+  offerId        String?
+  name           String
+  count          Int      @default(1)
+  price          Float?
+  subsidy        Float?
+  vat            String?
+  createdAt      DateTime @default(now())
+
+  @@index([orderId])
+  @@index([offerId])
+}
+
+model SyncLog {
+  id        String   @id @default(cuid())
+  type      String
+  message   String
+  level     String   @default("info")
+  meta      String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([type])
+}
