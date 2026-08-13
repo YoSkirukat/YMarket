@@ -1,6 +1,9 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { getSettings } from "@/lib/prisma";
 import { prisma } from "@/lib/prisma";
+import { clearSessionCookie, getCurrentUser } from "@/lib/auth";
+import { HeaderAccount } from "@/components/HeaderAccount";
 
 const NAV = [
   { href: "/products", label: "Товары" },
@@ -11,6 +14,12 @@ const NAV = [
 ];
 
 export async function AppHeader({ active }: { active?: string }) {
+  const user = await getCurrentUser();
+  if (!user) {
+    await clearSessionCookie();
+    redirect("/login");
+  }
+
   const settings = await getSettings();
   const pendingDigital = await prisma.order.count({
     where: {
@@ -19,6 +28,11 @@ export async function AppHeader({ active }: { active?: string }) {
       status: "PROCESSING",
     },
   });
+
+  const nav = [
+    ...NAV,
+    ...(user.role === "admin" ? [{ href: "/users", label: "Пользователи" }] : []),
+  ];
 
   return (
     <header className="border-b border-[var(--border)] bg-white">
@@ -38,7 +52,7 @@ export async function AppHeader({ active }: { active?: string }) {
         </Link>
 
         <nav className="flex flex-1 items-center gap-1 overflow-x-auto">
-          {NAV.map((item) => {
+          {nav.map((item) => {
             const isActive = active === item.href;
             return (
               <Link
@@ -60,6 +74,7 @@ export async function AppHeader({ active }: { active?: string }) {
             );
           })}
         </nav>
+        <HeaderAccount login={user.login} role={user.role} />
       </div>
     </header>
   );

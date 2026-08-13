@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { syncDigitalProductStock } from "@/lib/sync";
+import { requireApiUser } from "@/lib/auth";
 
 const STATUS_LABEL: Record<string, string> = {
   available: "в наличии",
@@ -13,6 +14,8 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const { error } = await requireApiUser();
+  if (error) return error;
   try {
     const { id } = await context.params;
     const product = await prisma.product.findUnique({ where: { id } });
@@ -111,6 +114,8 @@ export async function DELETE(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const { error } = await requireApiUser();
+  if (error) return error;
   try {
     const { id } = await context.params;
     const { searchParams } = new URL(request.url);

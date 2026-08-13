@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { pushStockToMarket } from "@/lib/sync";
+import { requireApiUser } from "@/lib/auth";
 
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const { error } = await requireApiUser();
+  if (error) return error;
   try {
     const { id } = await context.params;
     const body = await request.json();

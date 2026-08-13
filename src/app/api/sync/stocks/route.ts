@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { pushAllStocksToMarket, syncStocksFromMarket } from "@/lib/sync";
+import { requireApiUser } from "@/lib/auth";
 
 export async function POST(request: Request) {
+  const { error } = await requireApiUser();
+  if (error) return error;
   try {
     const url = new URL(request.url);
     const direction = url.searchParams.get("direction") || "pull";

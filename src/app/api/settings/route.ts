@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { getSettings, prisma } from "@/lib/prisma";
+import { requireApiUser } from "@/lib/auth";
 
 export async function GET() {
+  const { error } = await requireApiUser();
+  if (error) return error;
   const settings = await getSettings();
   return NextResponse.json({
     ...settings,
@@ -11,6 +14,8 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  const { error } = await requireApiUser();
+  if (error) return error;
   const body = await request.json();
   const current = await getSettings();
 
