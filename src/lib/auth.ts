@@ -63,17 +63,22 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
   }
 }
 
-export async function requireApiUser(role?: "admin") {
+export async function requireApiUser(
+  role?: "admin",
+): Promise<
+  | { user: SessionUser; error: null }
+  | { user: null; error: NextResponse }
+> {
   const user = await getCurrentUser();
   if (!user) {
     return {
-      user: null as const,
+      user: null,
       error: NextResponse.json({ error: "Нужна авторизация" }, { status: 401 }),
     };
   }
   if (role === "admin" && user.role !== "admin") {
     return {
-      user: null as const,
+      user: null,
       error: NextResponse.json({ error: "Недостаточно прав" }, { status: 403 }),
     };
   }
