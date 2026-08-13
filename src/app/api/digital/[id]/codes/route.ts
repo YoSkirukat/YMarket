@@ -2,6 +2,13 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { pushStockToMarket } from "@/lib/sync";
 
+const STATUS_LABEL: Record<string, string> = {
+  available: "в наличии",
+  reserved: "зарезервирован",
+  sold: "продан",
+  invalid: "недействителен",
+};
+
 export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
@@ -14,19 +21,45 @@ export async function POST(
     }
 
     const body = await request.json();
-    const codes: string[] = Array.isArray(body.codes)
+    const force = Boolean(body.force);
+    const rawCodes: string[] = Array.isArray(body.codes)
       ? body.codes.map((c: unknown) => String(c).trim()).filter(Boolean)
       : [];
+
+    // Unique within the request, keep first occurrence order
+    const codes = [...new Set(rawCodes)];
 
     if (!codes.length) {
       return NextResponse.json({ error: "Нет кодов" }, { status: 400 });
     }
 
+    const existing = await prisma.activationCode.findMany({
+      where: { productId: id, code: { in: codes } },
+      select: { id: true, code: true, status: true },
+    });
+
+    if (existing.length > 0 && !force) {
+      return NextResponse.json(
+        {
+          needsConfirmation: true,
+          duplicates: existing.map((row) => ({
+            code: row.code,
+            status: row.status,
+            statusLabel: STATUS_LABEL[row.status] ?? row.status,
+          })),
+        },
+        { status: 409 },
+      );
+    }
+
+    const existingByCode = new Map(existing.map((row) => [row.code, row]));
     let added = 0;
+    let reactivated = 0;
     let skipped = 0;
 
     for (const code of codes) {
-      try {
+      const found = existingByCode.get(code);
+      if (!found) {
         await prisma.activationCode.create({
           data: {
             productId: id,
@@ -35,9 +68,25 @@ export async function POST(
           },
         });
         added += 1;
-      } catch {
-        skipped += 1;
+        continue;
       }
+
+      if (found.status === "available") {
+        skipped += 1;
+        continue;
+      }
+
+      await prisma.activationCode.update({
+        where: { id: found.id },
+        data: {
+          status: "available",
+          orderId: null,
+          soldAt: null,
+          note: force ? "Повторно добавлен вручную" : null,
+        },
+      });
+      reactivated += 1;
+      added += 1;
     }
 
     const nextStock = product.stock + added;
@@ -64,6 +113,7 @@ export async function POST(
 
     return NextResponse.json({
       added,
+      reactivated,
       skipped,
       stock: nextStock,
       market,

@@ -2,6 +2,35 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
+import {
+  DuplicateCodesModal,
+  type DuplicateCode,
+} from "@/components/DuplicateCodesModal";
+
+function parseCodes(text: string) {
+  return text
+    .split(/[\n,;]+/)
+    .map((c) => c.trim())
+    .filter(Boolean);
+}
+
+function successMessage(data: {
+  added?: number;
+  reactivated?: number;
+  skipped?: number;
+  stock?: number;
+  market?: { ok: boolean; error?: string } | null;
+}) {
+  const parts = [`Добавлено: ${data.added ?? 0}`, `Остаток: ${data.stock ?? "—"}`];
+  if (data.reactivated) parts.push(`Восстановлено: ${data.reactivated}`);
+  if (data.skipped) parts.push(`Пропущено: ${data.skipped}`);
+  if (data.market && !data.market.ok) {
+    parts.push(`Маркет: ${data.market.error}`);
+  } else if (data.added) {
+    parts.push("Остаток отправлен в Маркет");
+  }
+  return parts.join(". ");
+}
 
 export function InlineAddCodesDialog({
   productId,
@@ -16,53 +45,73 @@ export function InlineAddCodesDialog({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [duplicates, setDuplicates] = useState<DuplicateCode[] | null>(null);
 
   const submitDisabled = useMemo(() => {
-    const codes = text
-      .split(/[\n,;]+/)
-      .map((c) => c.trim())
-      .filter(Boolean);
-    return loading || !codes.length;
+    return loading || !parseCodes(text).length;
   }, [loading, text]);
+
+  async function send(codes: string[], force = false) {
+    const res = await fetch(`/api/digital/${productId}/codes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codes, force }),
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (res.status === 409 && data.needsConfirmation) {
+      setDuplicates(data.duplicates ?? []);
+      return null;
+    }
+
+    if (!res.ok) throw new Error(data.error || "Ошибка добавления");
+    return data;
+  }
 
   async function submit() {
     setLoading(true);
     setError(null);
     setMessage(null);
+    setDuplicates(null);
 
     try {
-      const codes = text
-        .split(/[\n,;]+/)
-        .map((c) => c.trim())
-        .filter(Boolean);
-
-      const res = await fetch(`/api/digital/${productId}/codes`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ codes }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || "Ошибка добавления");
-      }
+      const codes = parseCodes(text);
+      const data = await send(codes);
+      if (!data) return;
 
       setText("");
-      setMessage(
-        `Добавлено: ${data.added}. Остаток: ${data.stock ?? "—"}${
-          data.market && !data.market.ok
-            ? `. Маркет: ${data.market.error}`
-            : data.added
-              ? ". Остаток отправлен в Маркет"
-              : ""
-        }`,
-      );
+      setMessage(successMessage(data));
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
+  }
+
+  async function confirmForce() {
+    setLoading(true);
+    setError(null);
+    try {
+      const codes = parseCodes(text);
+      const data = await send(codes, true);
+      if (!data) return;
+
+      setDuplicates(null);
+      setText("");
+      setMessage(successMessage(data));
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function close() {
+    if (loading) return;
+    setOpen(false);
+    setDuplicates(null);
   }
 
   return (
@@ -81,21 +130,19 @@ export function InlineAddCodesDialog({
           role="dialog"
           aria-modal="true"
         >
-          <div
-            className="absolute inset-0 bg-black/40"
-            onClick={() => setOpen(false)}
-          />
+          <div className="absolute inset-0 bg-black/40" onClick={close} />
           <div className="relative w-full max-w-xl rounded-xl border border-[var(--border)] bg-white p-4 shadow-lg">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <div className="text-sm font-semibold">Добавить коды</div>
                 <div className="mt-1 text-xs text-[var(--muted)]">
-                  Вставьте коды (по одному на строку). Дубликаты пропускаются.
+                  Вставьте коды (по одному на строку). При дублях спросим
+                  подтверждение.
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={close}
                 className="text-xs text-[var(--muted)] hover:underline"
               >
                 Закрыть
@@ -128,7 +175,15 @@ export function InlineAddCodesDialog({
           </div>
         </div>
       ) : null}
+
+      {duplicates ? (
+        <DuplicateCodesModal
+          duplicates={duplicates}
+          loading={loading}
+          onCancel={() => setDuplicates(null)}
+          onConfirm={confirmForce}
+        />
+      ) : null}
     </>
   );
 }
-
