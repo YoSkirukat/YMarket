@@ -6,6 +6,7 @@
     "dev": "next dev --turbopack",
     "build": "prisma generate && next build",
     "start": "next start",
+    "prestart": "prisma db push",
     "lint": "eslint",
     "db:push": "prisma db push",
     "db:studio": "prisma studio",

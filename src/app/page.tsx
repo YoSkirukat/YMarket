@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { AppHeader, PageShell, Panel, StatusBadge } from "@/components/ui";
 import { ActionButton } from "@/components/ActionButton";
 import { getSettings, prisma } from "@/lib/prisma";
-import { formatDateTime, formatMoney } from "@/lib/format";
+import { formatDateTime, formatMoney, orderStatusLabel } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -106,7 +106,21 @@ export default async function HomePage() {
                             </div>
                           ) : null}
                         </td>
-                        <td>{order.status}</td>
+                        <td>
+                          <StatusBadge
+                            tone={
+                              order.status === "DELIVERED"
+                                ? "ok"
+                                : order.status === "PROCESSING"
+                                  ? "warn"
+                                  : order.status === "CANCELLED"
+                                    ? "danger"
+                                    : "default"
+                            }
+                          >
+                            {orderStatusLabel(order.status)}
+                          </StatusBadge>
+                        </td>
                         <td>{formatMoney(order.totalPrice)}</td>
                         <td>{formatDateTime(order.creationDate)}</td>
                       </tr>
