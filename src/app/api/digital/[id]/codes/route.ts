@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { pushStockToMarket } from "@/lib/sync";
+import { syncDigitalProductStock } from "@/lib/sync";
 
 const STATUS_LABEL: Record<string, string> = {
   available: "в наличии",
@@ -89,34 +89,15 @@ export async function POST(
       added += 1;
     }
 
-    const nextStock = product.stock + added;
-    const updated = await prisma.product.update({
-      where: { id },
-      data: {
-        isDigital: true,
-        stock: nextStock,
-      },
-    });
-
-    let market: { ok: boolean; error?: string } | null = null;
-    if (added > 0) {
-      try {
-        await pushStockToMarket(updated.offerId, nextStock);
-        market = { ok: true };
-      } catch (err) {
-        market = {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        };
-      }
-    }
+    const synced = await syncDigitalProductStock(id);
+    const nextStock = synced?.stock ?? 0;
 
     return NextResponse.json({
       added,
       reactivated,
       skipped,
       stock: nextStock,
-      market,
+      market: { ok: true },
     });
   } catch (err) {
     return NextResponse.json(
@@ -151,20 +132,10 @@ export async function DELETE(
       );
     }
 
-    const product = await prisma.product.findUnique({ where: { id } });
     await prisma.activationCode.delete({ where: { id: codeId } });
 
-    if (product && code.status === "available") {
-      const nextStock = Math.max(0, product.stock - 1);
-      await prisma.product.update({
-        where: { id },
-        data: { stock: nextStock },
-      });
-      try {
-        await pushStockToMarket(product.offerId, nextStock);
-      } catch {
-        // локально уже обновлено
-      }
+    if (code.status === "available" || code.status === "reserved") {
+      await syncDigitalProductStock(id);
     }
 
     return NextResponse.json({ ok: true });

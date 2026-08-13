@@ -10,6 +10,7 @@ import { ActionButton } from "@/components/ActionButton";
 import { InventoryStockCell } from "@/components/InventoryStockCell";
 import { getSettings, prisma } from "@/lib/prisma";
 import { formatDateTime, formatMoney } from "@/lib/format";
+import { syncDigitalProductStock } from "@/lib/sync";
 
 export const dynamic = "force-dynamic";
 
@@ -34,15 +35,11 @@ export default async function InventoryPage({
     },
   });
 
-  // Если у цифрового товара уже есть коды, а stock=0 — подтянуть остаток по кодам
+  // Цифровые товары: остаток всегда равен числу доступных кодов
   for (const product of products) {
-    if (!product.isDigital) continue;
     const available = product.codes.filter((c) => c.status === "available").length;
-    if (available > 0 && product.stock === 0) {
-      await prisma.product.update({
-        where: { id: product.id },
-        data: { stock: available },
-      });
+    if ((product.isDigital || product.codes.length > 0) && product.stock !== available) {
+      await syncDigitalProductStock(product.id);
       product.stock = available;
     }
   }

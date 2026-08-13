@@ -378,7 +378,20 @@ export async function verifyAndFillCampaignIds() {
   return { ...data, warehouseId };
 }
 
+/** Не даём двум вебхукам одновременно выдать коды по одним и тем же заказам. */
+let pendingDeliveryQueue: Promise<unknown> = Promise.resolve();
+
 export async function processPendingDigitalOrders() {
+  const run = () => processPendingDigitalOrdersUnlocked();
+  const next = pendingDeliveryQueue.then(run, run);
+  pendingDeliveryQueue = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
+async function processPendingDigitalOrdersUnlocked() {
   const settings = await getSettings();
   if (!settings.apiKey || !settings.campaignId) {
     return { processed: 0, failed: 0, skipped: 0 };
@@ -408,8 +421,15 @@ export async function processPendingDigitalOrders() {
       await deliverSingleOrder(order.id);
       processed += 1;
     } catch (err) {
-      failed += 1;
       const message = err instanceof Error ? err.message : String(err);
+      if (
+        message === "Коды уже переданы" ||
+        message === "Коды уже выдаются по этому заказу"
+      ) {
+        processed += 1;
+        continue;
+      }
+      failed += 1;
       await prisma.order.update({
         where: { id: order.id },
         data: { deliveryError: message },
@@ -423,6 +443,43 @@ export async function processPendingDigitalOrders() {
   }
 
   return { processed, failed, skipped };
+}
+
+/** Для цифрового товара остаток = число доступных кодов. */
+export async function syncDigitalProductStock(
+  productId: string,
+  options?: { push?: boolean },
+) {
+  const product = await prisma.product.findUnique({ where: { id: productId } });
+  if (!product) return null;
+
+  const available = await prisma.activationCode.count({
+    where: { productId, status: "available" },
+  });
+
+  const changed = product.stock !== available;
+  if (changed) {
+    await prisma.product.update({
+      where: { id: productId },
+      data: { stock: available, isDigital: true },
+    });
+  }
+
+  if (changed && options?.push !== false) {
+    try {
+      await pushStockToMarket(product.offerId, available);
+    } catch (err) {
+      await log(
+        "stocks_push",
+        `Не удалось обновить остаток ${product.offerId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        "warn",
+      );
+    }
+  }
+
+  return { stock: available, offerId: product.offerId };
 }
 
 async function deliverSingleOrder(orderId: string) {
@@ -491,74 +548,70 @@ async function deliverSingleOrder(orderId: string) {
     throw new Error("В заказе нет позиций для выдачи");
   }
 
-  await deliverDigitalGoods(
-    settings.apiKey,
-    order.campaignId || settings.campaignId,
-    order.marketOrderId,
-    payloadItems,
-  );
+  const reserved = await prisma.activationCode.updateMany({
+    where: { id: { in: allocatedCodeIds }, status: "available" },
+    data: { status: "reserved", orderId: order.id },
+  });
 
-  await prisma.$transaction([
-    prisma.activationCode.updateMany({
-      where: { id: { in: allocatedCodeIds } },
-      data: {
-        status: "sold",
-        orderId: order.id,
-        soldAt: new Date(),
-      },
-    }),
-    prisma.order.update({
-      where: { id: order.id },
-      data: {
-        digitalDelivered: true,
-        digitalDeliveredAt: new Date(),
-        deliveryError: null,
-      },
-    }),
-  ]);
+  if (reserved.count !== allocatedCodeIds.length) {
+    throw new Error("Коды уже выдаются по этому заказу");
+  }
 
-  // Уменьшаем локальный остаток по каждому товару и пушим в Маркет
-  const soldByProduct = new Map<string, number>();
+  try {
+    await deliverDigitalGoods(
+      settings.apiKey,
+      order.campaignId || settings.campaignId,
+      order.marketOrderId,
+      payloadItems,
+    );
+  } catch (err) {
+    await prisma.activationCode.updateMany({
+      where: { id: { in: allocatedCodeIds }, status: "reserved" },
+      data: { status: "available", orderId: null },
+    });
+    throw err;
+  }
+
+  const claimed = await prisma.order.updateMany({
+    where: { id: order.id, digitalDelivered: false },
+    data: {
+      digitalDelivered: true,
+      digitalDeliveredAt: new Date(),
+      deliveryError: null,
+    },
+  });
+
+  await prisma.activationCode.updateMany({
+    where: { id: { in: allocatedCodeIds } },
+    data: {
+      status: "sold",
+      orderId: order.id,
+      soldAt: new Date(),
+    },
+  });
+
+  const productIds = new Set<string>();
   for (const item of order.items) {
     const product = item.offerId
       ? await prisma.product.findUnique({ where: { offerId: item.offerId } })
       : item.productId
         ? await prisma.product.findUnique({ where: { id: item.productId } })
         : null;
-    if (!product) continue;
-    soldByProduct.set(
-      product.id,
-      (soldByProduct.get(product.id) ?? 0) + item.count,
+    if (product) productIds.add(product.id);
+  }
+
+  for (const productId of productIds) {
+    await syncDigitalProductStock(productId);
+  }
+
+  if (claimed.count > 0) {
+    await log(
+      "digital_deliver",
+      `Переданы коды по заказу №${order.marketOrderId}`,
+      "info",
+      { orderId: order.marketOrderId, codes: allocatedCodeIds.length },
     );
   }
-
-  for (const [productId, soldCount] of soldByProduct) {
-    const product = await prisma.product.findUnique({ where: { id: productId } });
-    if (!product) continue;
-    const nextStock = Math.max(0, product.stock - soldCount);
-    await prisma.product.update({
-      where: { id: productId },
-      data: { stock: nextStock },
-    });
-    try {
-      await pushStockToMarket(product.offerId, nextStock);
-    } catch (err) {
-      await log(
-        "stocks_push",
-        `Не удалось обновить остаток ${product.offerId} после выдачи: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-        "warn",
-      );
-    }
-  }
-
-  await log(
-    "digital_deliver",
-    `Переданы коды по заказу №${order.marketOrderId}`,
-    "info",
-    { orderId: order.marketOrderId, codes: allocatedCodeIds.length },
-  );
 
   return prisma.order.findUnique({ where: { id: orderId } });
 }
@@ -568,6 +621,12 @@ export async function deliverOrderById(orderId: string) {
     return await deliverSingleOrder(orderId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (
+      message === "Коды уже переданы" ||
+      message === "Коды уже выдаются по этому заказу"
+    ) {
+      return prisma.order.findUnique({ where: { id: orderId } });
+    }
     await prisma.order.update({
       where: { id: orderId },
       data: { deliveryError: message },
@@ -667,8 +726,20 @@ export async function syncStocksFromMarket() {
 
   let updated = 0;
   for (const [offerId, count] of stockMap) {
-    const product = await prisma.product.findUnique({ where: { offerId } });
+    const product = await prisma.product.findUnique({
+      where: { offerId },
+      include: { _count: { select: { codes: true } } },
+    });
     if (!product) continue;
+
+    // Цифровые товары: источник остатка — доступные коды, а не Маркет.
+    // Иначе заказ на Маркете уменьшает склад, а локальная выдача списывает ещё раз.
+    if (product.isDigital || product._count.codes > 0) {
+      await syncDigitalProductStock(product.id, { push: false });
+      updated += 1;
+      continue;
+    }
+
     await prisma.product.update({
       where: { id: product.id },
       data: { stock: count },
@@ -736,6 +807,22 @@ export async function pushStockToMarket(offerId: string, count: number) {
 /** Отправить все локальные остатки в Яндекс Маркет */
 export async function pushAllStocksToMarket() {
   const products = await prisma.product.findMany({
+    select: {
+      id: true,
+      offerId: true,
+      stock: true,
+      isDigital: true,
+      _count: { select: { codes: true } },
+    },
+  });
+
+  for (const p of products) {
+    if (p.isDigital || p._count.codes > 0) {
+      await syncDigitalProductStock(p.id, { push: false });
+    }
+  }
+
+  const toPush = await prisma.product.findMany({
     select: { offerId: true, stock: true },
   });
 
@@ -745,8 +832,8 @@ export async function pushAllStocksToMarket() {
 
   // Батчами по 100
   const chunkSize = 100;
-  for (let i = 0; i < products.length; i += chunkSize) {
-    const chunk = products.slice(i, i + chunkSize);
+  for (let i = 0; i < toPush.length; i += chunkSize) {
+    const chunk = toPush.slice(i, i + chunkSize);
     try {
       const settings = await getSettings();
       if (!settings.apiKey) throw new Error("API-ключ не задан");
