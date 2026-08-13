@@ -12,15 +12,22 @@ const ORDER_EVENTS = new Set([
 
 /**
  * Маркет шлёт POST на {baseUrl}/notification.
- * В кабинете укажите base: https://your-host/api/webhooks/yandex?secret=...
+ * Секрет — в пути (query ?secret= несовместим: Маркет дописывает /notification в конец строки).
+ *
+ * Без секрета:  https://host/api/webhooks/yandex
+ *               → POST .../yandex/notification
+ * С секретом:   https://host/api/webhooks/yandex/ВАШ_СЕКРЕТ
+ *               → POST .../yandex/ВАШ_СЕКРЕТ/notification
  */
-export async function handleYandexWebhook(request: Request) {
+export async function handleYandexWebhook(
+  request: Request,
+  pathSecret = "",
+) {
   try {
     const settings = await getSettings();
-    const url = new URL(request.url);
-    const secret = url.searchParams.get("secret") || "";
+    const expected = settings.webhookSecret.trim();
 
-    if (settings.webhookSecret && secret !== settings.webhookSecret) {
+    if (expected && pathSecret !== expected) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 

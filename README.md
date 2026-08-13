@@ -60,10 +60,12 @@ npm run dev
 В настройках Маркета укажите URL:
 
 ```text
-https://your-domain/api/webhooks/yandex?secret=ВАШ_СЕКРЕТ
-
-Маркет отправит запросы на `{этот URL}/notification`.
+https://your-domain/api/webhooks/yandex/ВАШ_СЕКРЕТ
 ```
+
+Секрет — в пути (не в `?secret=`): Маркет дописывает `/notification` в конец URL,
+и query-параметр ломается. Итоговый запрос:
+`POST /api/webhooks/yandex/ВАШ_СЕКРЕТ/notification`.
 
 Секрет задаётся на странице **Настройки**.
 

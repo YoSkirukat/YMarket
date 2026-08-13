@@ -1,17 +1,10 @@
-import {
-  handleYandexWebhook,
-  handleYandexWebhookInfo,
-} from "@/lib/yandex-webhook";
+import { handleYandexWebhookInfo } from "@/lib/yandex-webhook";
 
 /**
- * Базовый URL для кабинета Маркета:
- * https://your-host/api/webhooks/yandex?secret=...
- * Маркет сам добавит /notification.
+ * Информационный GET. Рабочий endpoint у Маркета:
+ * - без секрета: /api/webhooks/yandex/notification
+ * - с секретом:  /api/webhooks/yandex/{secret}/notification
  */
-export async function POST(request: Request) {
-  return handleYandexWebhook(request);
-}
-
 export async function GET() {
   return handleYandexWebhookInfo();
 }
