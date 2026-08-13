@@ -181,7 +181,8 @@ export function SettingsForm({
             placeholder="произвольная строка"
           />
           <span className="mt-1 block text-xs text-[var(--muted)]">
-            POST /api/webhooks/yandex?secret=... — для уведомлений Маркета
+            В ЛК Маркета укажите base URL: /api/webhooks/yandex?secret=...
+            (Маркет сам добавит /notification)
           </span>
         </label>
       </div>

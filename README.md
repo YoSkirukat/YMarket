@@ -61,6 +61,8 @@ npm run dev
 
 ```text
 https://your-domain/api/webhooks/yandex?secret=ВАШ_СЕКРЕТ
+
+Маркет отправит запросы на `{этот URL}/notification`.
 ```
 
 Секрет задаётся на странице **Настройки**.
