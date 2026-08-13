@@ -37,6 +37,7 @@ model Product {
   description   String?
   isDigital     Boolean          @default(false)
   stock         Int              @default(0)
+  slipText      String           @default("")
   marketStatus  String?
   rawJson       String?
   createdAt     DateTime         @default(now())

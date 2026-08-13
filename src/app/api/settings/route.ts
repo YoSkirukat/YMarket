@@ -28,7 +28,6 @@ export async function PUT(request: Request) {
       warehouseId: String(body.warehouseId ?? "").trim(),
       shopName: String(body.shopName ?? "").trim(),
       activateTill: String(body.activateTill ?? "2099-12-31").trim(),
-      slipText: String(body.slipText ?? "").trim(),
       autoDeliver: Boolean(body.autoDeliver),
       webhookSecret: String(body.webhookSecret ?? "").trim(),
     },

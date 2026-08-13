@@ -15,12 +15,16 @@ export async function PATCH(
         ? Math.max(0, Math.floor(Number(body.stock)) || 0)
         : undefined;
 
+    const slipText =
+      typeof body.slipText === "string" ? body.slipText.trim() : undefined;
+
     const product = await prisma.product.update({
       where: { id },
       data: {
         isDigital:
           typeof body.isDigital === "boolean" ? body.isDigital : undefined,
         stock,
+        slipText,
       },
     });
 

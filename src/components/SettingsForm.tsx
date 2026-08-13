@@ -13,7 +13,6 @@ export function SettingsForm({
     warehouseId: string;
     shopName: string;
     activateTill: string;
-    slipText: string;
     autoDeliver: boolean;
     webhookSecret: string;
   };
@@ -157,17 +156,6 @@ export function SettingsForm({
           <span className="text-sm">
             Автоматически передавать коды при синхронизации заказов
           </span>
-        </label>
-
-        <label className="block md:col-span-2">
-          <span className="mb-1.5 block text-sm font-medium">
-            Инструкция для покупателя (slip)
-          </span>
-          <textarea
-            value={form.slipText}
-            onChange={(e) => update("slipText", e.target.value)}
-            className="field min-h-24"
-          />
         </label>
 
         <label className="block md:col-span-2">

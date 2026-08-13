@@ -32,7 +32,6 @@ export default async function SettingsPage() {
                 warehouseId: settings.warehouseId,
                 shopName: settings.shopName,
                 activateTill: settings.activateTill,
-                slipText: settings.slipText,
                 autoDeliver: settings.autoDeliver,
                 webhookSecret: settings.webhookSecret,
               }}

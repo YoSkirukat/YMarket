@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AddCodesForm } from "@/components/AddCodesForm";
+import { ProductSlipForm } from "@/components/ProductSlipForm";
 import { DeleteCodeButton } from "@/components/DeleteCodeButton";
 import { AppHeader, PageShell, Panel, StatusBadge } from "@/components/ui";
 import { prisma } from "@/lib/prisma";
@@ -46,6 +47,8 @@ export default async function DigitalProductPage({
           <Panel className="fade-in px-4 py-4">
             <div className="mb-3 text-sm font-medium">Добавить коды на остатки</div>
             <AddCodesForm productId={product.id} />
+            <div className="my-5 border-t border-[var(--border)]" />
+            <ProductSlipForm productId={product.id} initial={product.slipText} />
             <p className="mt-4 text-xs text-[var(--muted)]">
               При заказе сервис автоматически возьмёт нужное число кодов и
               передаст их методом{" "}

@@ -539,7 +539,7 @@ async function deliverSingleOrder(orderId: string) {
     payloadItems.push({
       id: item.marketItemId,
       codes: codes.map((c) => c.code),
-      slip: settings.slipText || undefined,
+      slip: product.slipText.trim() || settings.slipText.trim() || undefined,
       activate_till: settings.activateTill || "2099-12-31",
     });
   }
