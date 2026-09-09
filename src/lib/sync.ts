@@ -391,11 +391,52 @@ export async function processPendingDigitalOrders() {
   return next;
 }
 
+/**
+ * Освобождает коды, которые остались в статусе "reserved" на заказе, который
+ * так и не был доставлен (digitalDelivered=false), и не менялись дольше
+ * STALE_RESERVATION_MS. Такие коды — следствие прерванной/раздублированной
+ * попытки резервирования (см. deliverSingleOrder) и иначе зависают навсегда.
+ */
+const STALE_RESERVATION_MS = 10 * 60 * 1000;
+
+async function releaseStaleReservedCodes() {
+  const staleBefore = new Date(Date.now() - STALE_RESERVATION_MS);
+
+  const stale = await prisma.activationCode.findMany({
+    where: {
+      status: "reserved",
+      updatedAt: { lt: staleBefore },
+      order: { digitalDelivered: false },
+    },
+    select: { id: true, productId: true },
+  });
+
+  if (!stale.length) return;
+
+  await prisma.activationCode.updateMany({
+    where: { id: { in: stale.map((c) => c.id) } },
+    data: { status: "available", orderId: null },
+  });
+
+  await log(
+    "digital_deliver",
+    `Освобождены зависшие в резерве коды: ${stale.length}`,
+    "warn",
+  );
+
+  const productIds = new Set(stale.map((c) => c.productId));
+  for (const productId of productIds) {
+    await syncDigitalProductStock(productId);
+  }
+}
+
 async function processPendingDigitalOrdersUnlocked() {
   const settings = await getSettings();
   if (!settings.apiKey || !settings.campaignId) {
     return { processed: 0, failed: 0, skipped: 0 };
   }
+
+  await releaseStaleReservedCodes();
 
   const pending = await prisma.order.findMany({
     where: {
@@ -554,6 +595,17 @@ async function deliverSingleOrder(orderId: string) {
   });
 
   if (reserved.count !== allocatedCodeIds.length) {
+    // Часть кодов успела зарезервировать параллельная попытка (вебхук/крон/ручная
+    // кнопка) — откатываем то, что зарезервировали именно этим вызовом, чтобы
+    // коды не зависали в резерве без доставки.
+    await prisma.activationCode.updateMany({
+      where: {
+        id: { in: allocatedCodeIds },
+        status: "reserved",
+        orderId: order.id,
+      },
+      data: { status: "available", orderId: null },
+    });
     throw new Error("Коды уже выдаются по этому заказу");
   }
 
@@ -618,7 +670,16 @@ async function deliverSingleOrder(orderId: string) {
 
 export async function deliverOrderById(orderId: string) {
   try {
-    return await deliverSingleOrder(orderId);
+    // Идём через ту же очередь, что и автоматическая обработка (вебхук/крон),
+    // чтобы ручная кнопка не резервировала коды параллельно с фоновым запуском
+    // по этому же заказу.
+    const run = () => deliverSingleOrder(orderId);
+    const next = pendingDeliveryQueue.then(run, run);
+    pendingDeliveryQueue = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await next;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (
