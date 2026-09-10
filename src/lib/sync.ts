@@ -252,40 +252,61 @@ async function upsertOrderFromYm(order: YMOrder, campaignId?: string | null) {
   });
 
   if (order.items?.length) {
-    await prisma.orderItem.deleteMany({ where: { orderId: dbOrder.id } });
+    await prisma.$transaction(async (tx) => {
+      await tx.orderItem.deleteMany({ where: { orderId: dbOrder.id } });
 
-    for (const item of order.items) {
-      const product = item.offerId
-        ? await prisma.product.findUnique({ where: { offerId: item.offerId } })
-        : null;
+      for (const item of order.items ?? []) {
+        const product = item.offerId
+          ? await tx.product.findUnique({ where: { offerId: item.offerId } })
+          : null;
 
-      await prisma.orderItem.create({
-        data: {
-          orderId: dbOrder.id,
-          productId: product?.id ?? null,
-          marketItemId: item.id,
-          offerId: item.offerId ?? item.shopSku ?? null,
-          name: item.offerName || item.offerId || `Товар #${item.id}`,
-          count: item.count,
-          price: itemPrice(item),
-          subsidy: item.prices?.subsidy?.value ?? item.subsidy ?? null,
-          vat: item.vat ?? null,
-        },
-      });
-
-      if (product && !product.isDigital && digital) {
-        await prisma.product.update({
-          where: { id: product.id },
-          data: { isDigital: true },
+        await tx.orderItem.create({
+          data: {
+            orderId: dbOrder.id,
+            productId: product?.id ?? null,
+            marketItemId: item.id,
+            offerId: item.offerId ?? item.shopSku ?? null,
+            name: item.offerName || item.offerId || `Товар #${item.id}`,
+            count: item.count,
+            price: itemPrice(item),
+            subsidy: item.prices?.subsidy?.value ?? item.subsidy ?? null,
+            vat: item.vat ?? null,
+          },
         });
+
+        if (product && !product.isDigital && digital) {
+          await tx.product.update({
+            where: { id: product.id },
+            data: { isDigital: true },
+          });
+        }
       }
-    }
+    });
   }
 
   return dbOrder;
 }
 
+/**
+ * Не даём двум одновременным синхронизациям (вебхук + вебхук, вебхук + кнопка
+ * «Синхронизировать», вебхук + внешний крон) гонять upsertOrderFromYm по одному
+ * и тому же заказу параллельно: там сначала удаляются все OrderItem, а потом
+ * создаются заново, и без сериализации второй вызов успевает вставить свои
+ * строки поверх уже вставленных первым — заказ задваивается в составе.
+ */
+let pendingOrderSyncQueue: Promise<unknown> = Promise.resolve();
+
 export async function syncOrders() {
+  const run = () => syncOrdersUnlocked();
+  const next = pendingOrderSyncQueue.then(run, run);
+  pendingOrderSyncQueue = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
+async function syncOrdersUnlocked() {
   const settings = await getSettings();
   if (!settings.apiKey) {
     throw new Error("Укажите API-ключ в настройках");
