@@ -296,8 +296,13 @@ async function upsertOrderFromYm(order: YMOrder, campaignId?: string | null) {
  */
 let pendingOrderSyncQueue: Promise<unknown> = Promise.resolve();
 
-export async function syncOrders() {
-  const run = () => syncOrdersUnlocked();
+export type OrderSyncOptions = {
+  /** Тихий режим фоновой автосинхронизации: не засорять журнал рутинными записями. */
+  quiet?: boolean;
+};
+
+export async function syncOrders(options: OrderSyncOptions = {}) {
+  const run = () => syncOrdersUnlocked(options);
   const next = pendingOrderSyncQueue.then(run, run);
   pendingOrderSyncQueue = next.then(
     () => undefined,
@@ -306,7 +311,7 @@ export async function syncOrders() {
   return next;
 }
 
-async function syncOrdersUnlocked() {
+async function syncOrdersUnlocked(options: OrderSyncOptions = {}) {
   const settings = await getSettings();
   if (!settings.apiKey) {
     throw new Error("Укажите API-ключ в настройках");
@@ -351,11 +356,22 @@ async function syncOrdersUnlocked() {
     data: { lastOrdersSync: new Date() },
   });
 
-  await log("orders_sync", `Синхронизировано заказов: ${synced}`);
-
   const delivered = settings.autoDeliver
     ? await processPendingDigitalOrders()
     : { processed: 0, failed: 0, skipped: 0 };
+
+  // В тихом режиме (фоновая автосинхронизация) пишем в журнал только когда
+  // реально что-то произошло — иначе журнал забивается рутинными записями.
+  const notable = delivered.processed > 0 || delivered.failed > 0;
+  if (!options.quiet || notable) {
+    await log(
+      "orders_sync",
+      notable
+        ? `Синхронизировано заказов: ${synced} · выдано кодов: ${delivered.processed}, ошибок: ${delivered.failed}`
+        : `Синхронизировано заказов: ${synced}`,
+      delivered.failed > 0 ? "warn" : "info",
+    );
+  }
 
   return { synced, delivered };
 }

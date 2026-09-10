@@ -1,14 +1,25 @@
 import { NextResponse } from "next/server";
-import { getSettings } from "@/lib/prisma";
+import { getSettings, prisma } from "@/lib/prisma";
 import { syncOrders } from "@/lib/sync";
 
+/**
+ * Уведомления Маркета, по которым нужно обновить заказы.
+ * Дополнительно реагируем на любой тип, содержащий ORDER, — чтобы не пропустить
+ * смену статуса (в т.ч. на DELIVERED), если Маркет пришлёт новый тип события.
+ */
 const ORDER_EVENTS = new Set([
   "ORDER_CREATED",
   "ORDER_UPDATED",
   "ORDER_STATUS_UPDATED",
+  "ORDER_STATUS_CHANGED",
+  "ORDER_DELIVERED",
   "ORDER_CANCELLED",
   "ORDER_CANCELLATION_REQUEST",
 ]);
+
+function isOrderEvent(type: string) {
+  return ORDER_EVENTS.has(type) || type.includes("ORDER");
+}
 
 /**
  * Маркет шлёт POST на {baseUrl}/notification.
@@ -37,7 +48,19 @@ export async function handleYandexWebhook(
 
     const notificationType = body?.notificationType ?? "";
 
-    if (ORDER_EVENTS.has(notificationType)) {
+    if (notificationType) {
+      // Фиксируем приём уведомления, чтобы в журнале было видно, доходят ли они.
+      await prisma.syncLog
+        .create({
+          data: {
+            type: "webhook",
+            message: `Уведомление Маркета: ${notificationType}`,
+          },
+        })
+        .catch(() => undefined);
+    }
+
+    if (isOrderEvent(notificationType)) {
       void syncOrders().catch(() => undefined);
     }
 
